@@ -1,0 +1,306 @@
+#!/usr/bin/perl -w
+
+# PUNCH a utility to add up the amount of time that has been worked on a
+# project. PUNCH will allow you to punch in and out on a project and ask total
+# time worked on a project. When you punch in or out of a project a record
+# will be made of that event in a file and the total time worked so far on the
+# project will be shown.
+#
+# Copyright (C) 2002   Derek Wueppelmann (monkey@monkey.homeip.net)
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+
+use strict;
+
+use vars qw($VERSION);
+$VERSION = '1.1';
+
+##                                 ##
+##                                 ##
+## Change pdir for month desired:  ##
+##                                 ##
+##                                 ##
+my $pdir = '/.punch/.archive/09';
+#my $pdir = '/clients/2014-archive/time-punch/12';
+
+sub main(@) {
+	my $action = shift;
+	if ($action =~ /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i) {
+		$action = substr($action, 0, 3);
+		$action = lc $action;
+		my %months = (
+			'jan' => '01',
+			'feb' => '02',
+			'mar' => '03',
+			'apr' => '04',
+			'may' => '05',
+			'jun' => '06',
+			'jul' => '07',
+			'aug' => '08',
+			'sep' => '09',
+			'oct' => '10',
+			'nov' => '11',
+			'dec' => '12',
+		);
+		$pdir = '/.punch/.archive/';
+		$pdir .= $months{$action};
+		$action = shift;
+	}
+	my $project = shift;
+	my $task = join " ", @_;
+	
+	if (!defined($action) || $action eq '') {
+		return(usage());
+	}
+
+	$action = uc($action);
+
+	if (defined($project) && $project ne '') {
+		# All items requiring the project to be defined
+		if ($action eq 'SUMMARY') {
+			return(sumarizeProject($project));
+		}
+		elsif ($action eq 'TOTAL') {
+			return(totalTime($project, $task));
+		}
+	}
+	elsif ($action eq 'LIST') {
+		return(listProjects());
+	}
+
+	# By default show the useage;
+	return(usage());
+}
+
+# Display the usage statement for this utility
+sub usage() {
+	print "Punch (V $VERSION) - Acts as a punch card system for multiple probjects.\n\n";
+	print "USAGE:\n";
+	print "\tarchive-punch [month] COMMAND [PROJECTNAME]\n";
+	print "\tCommands:\n";
+	print "\t\tLIST    - Lists out all of the projects currently held.\n";
+	print "\t\tTOTAL   - Sums up the total time worked on the given project\n";
+	print "\t\t          and displays it in the form HH:MM::SS.\n";
+	print "\t\tSUMMARY - Lists out each day that the project was worked on\n";
+	print "\t\t          and for how long each day.\n";
+
+	return(0);
+}
+
+# Get the complete file and path to the project given. make sure that the
+# directory exists first as well if not create it.
+sub getProject($) {
+	my ($project) = @_;
+	my ($dirName, $fileName);
+
+	$dirName = $ENV{'HOME'} . $pdir;
+	unless (-d $dirName) {
+		mkdir($dirName, 0755);
+	}
+
+	$fileName = "$project.punch";
+
+	return("$dirName/$fileName");
+}
+
+# get the current status of the project given.
+sub getCurrentStatus($) {
+	my ($project) = @_;
+	my ($fileName, $status);
+	local (*CARD);
+
+	$fileName = getProject($project);
+	unless (-e $fileName) {
+		return('OUT');
+	}
+
+	open(CARD, $fileName) or return('');
+
+	while (<CARD>) {
+		if (/^([^:^-]+)(-[^:]+)?: \d+$/) {
+			$status = $1;
+		}
+	}
+
+	close(CARD);
+
+	return($status);
+}
+
+# return the total time worked on a project. Go through the file and add up
+# all the seconds. then convert this in to an hours:minuts:seconds format.
+sub totalTime($) {
+	my ($project) = @_;
+	my ($fileName);
+	my ($startTime, $endTime, $totalTime);
+	local (*CARD);
+
+	$totalTime = 0;
+
+	$fileName = getProject($project);
+
+	open(CARD, $fileName) or return(-1);
+	while (<CARD>) {
+		if (/^IN(-[^:]+)?: (\d+)$/) {
+			$startTime = $2;
+		}
+		elsif (/^OUT: (\d+)$/) {
+			$endTime = $1;
+
+			$totalTime += ($endTime - $startTime);
+		}
+	}
+	close(CARD);
+
+	print "Total Time: " . makeTimeString($totalTime) . "\n";
+}
+
+sub listProjects() {
+	my ($dirName, $fileName, $task);
+	my ($count) = (0);
+	my (%tasks);
+	local (*DIR, *CARD);
+	
+	$dirName = $ENV{'HOME'} . $pdir;
+	if (!opendir(DIR, $dirName)) {
+		print "No projects could be found\n";
+		return(-1);
+	}
+
+	foreach $fileName (sort(readdir(DIR))) {
+		if ($fileName =~ /(.*)\.punch/) {
+			if ($count++ == 0) {
+				print "Projects:\n\n";
+			}
+			print "$1\n";
+
+			# Get the task list for this project
+			%tasks = ();
+			open (CARD, "$dirName/$fileName") or next;
+			while (<CARD>) {
+				if (/[^:^-]+-([^:]+):/) {
+					$tasks{$1} = 1;
+				}
+			}
+			close(CARD);
+
+			foreach $task (sort(keys(%tasks))) {
+				print "\t$task\n";
+			}
+		}
+	}
+
+	if ($count == 0) {
+		print "No projects could be found\n";
+	}
+	else {
+		print "\n$count Total Projects\n";
+	}
+}
+
+sub sumarizeProject($) {
+	my ($project) = @_;
+	my ($fileName);
+	my ($startTime, $endTime, $totalTime, $lastDate, $thisDate);
+	my ($currentTask, $task, $taskName);
+	my (%taskList);
+	my (@date);
+	local (*CARD);
+
+	$totalTime = 0;
+
+	$fileName = getProject($project);
+	$lastDate = $thisDate = 0;
+
+	open(CARD, $fileName) or return(-1);
+	while (<CARD>) {
+		if (/^IN(-[^:]+)?: (\d+)$/) {
+			$startTime = $2;
+			if (defined($1) && $1 ne '') {
+				$currentTask = $1;
+				$currentTask =~ s/^-//;
+			}
+			else {
+				$currentTask = '';
+			}
+		}
+		elsif (/^OUT: (\d+)$/) {
+			$endTime = $1;
+
+			# Find out what date this time range is for.
+			@date = localtime($endTime);
+			$thisDate = ($date[5] + 1900) . '-';
+			$thisDate .= '0' if ($date[4] < 9);
+			$thisDate .= ($date[4] + 1) . '-';
+			$thisDate .= '0' if ($date[3] < 10);
+			$thisDate .= $date[3];
+
+			# Is this date a different date than the last?
+			if ($thisDate ne $lastDate) {
+				# Yes. But did the last date not exist?
+				if ($lastDate ne '0') {
+					# No it didn't
+					foreach $task (sort(keys(%taskList))) {
+						$taskName = $task;
+						$taskName = 'GENERAL' if ($taskName eq '');
+						print "$lastDate - ($taskName): " . makeTimeString($taskList{$task}) . "\n";
+					}
+					%taskList = ();
+				}
+
+				$lastDate = $thisDate;
+			}
+
+			if (!exists($taskList{$currentTask})) {
+				$taskList{$currentTask} = 0;
+			}
+			$taskList{$currentTask} += ($endTime - $startTime);
+		}
+	}
+	close(CARD);
+
+	foreach $task (sort(keys(%taskList))) {
+		$taskName = $task;
+		$taskName = 'GENERAL' if ($taskName eq '');
+		print "$lastDate - ($taskName): " . makeTimeString($taskList{$task}) . "\n";
+	}
+}
+
+sub makeTimeString($) {
+	my ($totalTime) = @_;
+	my ($hours, $minutes, $seconds);
+	my ($string);
+	
+	$hours = int($totalTime / (60 * 60));
+	$totalTime = $totalTime % (60 * 60);
+	while (length($hours) < 2) {
+		$hours = '0' . $hours;
+	}
+
+	$minutes = int ($totalTime / 60);
+	$totalTime = $totalTime % 60;
+	while (length($minutes) < 2) {
+		$minutes = '0' . $minutes;
+	}
+
+	$seconds = $totalTime;
+	while (length($seconds) < 2) {
+		$seconds = '0' . $seconds;
+	}
+
+	$string = "$hours:$minutes:$seconds";
+}
+
+exit(main(@ARGV));
