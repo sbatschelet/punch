@@ -27,3 +27,4 @@ Then you can edit `bin/archive-punch` and run `archive-punch summary <client>` t
 ### Notes
 
 I prefer to use a client name without spaces.
+example: paper_source
